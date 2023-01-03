@@ -11,7 +11,7 @@ MODULE_VERSION("0.02");
 
 #define DEVICE_NAME "lkm_example"
 #define EXAMPLE_MSG "Hello, World3!\n"
-#define MSG_BUFFER_LEN 15
+#define BUF_LEN 80
 
 /* Prototypes for device functions */
 static int device_open(struct inode *, struct file *);
@@ -20,7 +20,7 @@ static ssize_t device_read(struct file *, char *, size_t, loff_t *);
 static ssize_t device_write(struct file *, const char *, size_t, loff_t *);
 static int major_num;
 static int device_open_count = 0;
-static char msg_buffer[MSG_BUFFER_LEN];
+static char msg_buffer[BUF_LEN + 1];
 static char *msg_ptr;
 
 /* This structure points to all of the device functions */
@@ -51,11 +51,19 @@ static ssize_t device_read(struct file *flip, char *buffer, size_t len, loff_t *
 }
 
 /* Called when a process tries to write to our device */
-static ssize_t device_write(struct file *flip, const char *buffer, size_t len, loff_t *offset) {
-	/* This is a read-only device */
-	printk(KERN_ALERT "This operation is not supported.\n");
-	return -EINVAL;
-}
+static ssize_t device_write(struct file *file, const char __user *buffer, size_t len, loff_t *offset) { 
+    int i; 
+ 
+    pr_info("device_write(%p,%p,%ld)", file, buffer, len); 
+ 
+    for (i = 0; i < len && i < BUF_LEN; i++){ 
+        get_user(msg_buffer[i], buffer + i);
+	}
+	msg_buffer[i] = '\0';
+    /* Again, return the number of input characters used. */ 
+	printk(KERN_INFO "Got Message %s\n", msg_buffer);	
+    return i; 
+} 
 
 /* Called when a process opens our device */
 static int device_open(struct inode *inode, struct file *file) {
@@ -78,7 +86,7 @@ static int device_release(struct inode *inode, struct file *file) {
 
 static int __init lkm_example_init(void) {
 	/* Fill buffer with our message */
-	strncpy(msg_buffer, EXAMPLE_MSG, MSG_BUFFER_LEN);
+	strncpy(msg_buffer, EXAMPLE_MSG, BUF_LEN);
 	/* Set the msg_ptr to the buffer */
 	msg_ptr = msg_buffer;
 	/* Try to register character device */
