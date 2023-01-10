@@ -3,6 +3,9 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <asm/uaccess.h>
+#include <linux/net.h>
+#include <linux/in.h>
+#include <linux/netpoll.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Bradley Ouellette");
@@ -12,6 +15,8 @@ MODULE_VERSION("0.02");
 #define DEVICE_NAME "lkm_example"
 #define EXAMPLE_MSG "Hello, World3!\n"
 #define BUF_LEN 80
+#define INADDR_SEND ((unsigned long int)0xC0A89710) //10.0.2.15  192.168.151.16
+
 
 /* Prototypes for device functions */
 static int device_open(struct inode *, struct file *);
@@ -22,6 +27,12 @@ static int major_num;
 static int device_open_count = 0;
 static char msg_buffer[BUF_LEN + 1];
 static char *msg_ptr;
+static struct socket *sock;
+static bool sock_init;
+static struct sockaddr_in sin;
+static struct msghdr msg;
+static struct iovec iov;
+
 
 /* This structure points to all of the device functions */
 static struct file_operations file_ops = {
@@ -53,7 +64,7 @@ static ssize_t device_read(struct file *flip, char *buffer, size_t len, loff_t *
 /* Called when a process tries to write to our device */
 static ssize_t device_write(struct file *file, const char __user *buffer, size_t len, loff_t *offset) { 
     int i; 
- 
+	int error, len;
     pr_info("device_write(%p,%p,%ld)", file, buffer, len); 
  
     for (i = 0; i < len && i < BUF_LEN; i++){ 
@@ -61,7 +72,18 @@ static ssize_t device_write(struct file *file, const char __user *buffer, size_t
 	}
 	msg_buffer[i] = '\0';
     /* Again, return the number of input characters used. */ 
-	printk(KERN_INFO "Got Message %s\n", msg_buffer);	
+	printk(KERN_INFO "Got Message %s\n", msg_buffer);
+	
+	iov.iov_base = msg_buffer;
+	len = strlen(msg_buffer);
+	iov.iov_len = len;
+	msg.msg_iovlen = len;
+	old_fs = get_fs();
+	set_fs(KERNEL_DS);
+	error = sock_sendmsg(sock,&msg,len);
+	set_fs(old_fs);
+
+	printk(KERN_INFO "Got responce on sending the socket %d\n", error);
     return i; 
 } 
 
@@ -97,6 +119,32 @@ static int __init lkm_example_init(void) {
 	} else {
 		printk(KERN_INFO "lkm_example module loaded with device major number %d\n", major_num);
 		return 0;
+	}
+
+	if (sock_init == false) {
+		/* Creating socket */
+		error = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &sock);
+  		if (error<0) {
+    		printk(KERN_DEBUG "Can't create socket. Error %d\n",error);
+		}
+
+  		/* Connecting the socket */
+  		sin.sin_family = AF_INET;
+  		sin.sin_port = htons(1764);
+  		sin.sin_addr.s_addr = htonl(INADDR_SEND);
+  		error = sock->ops->connect(sock, (struct sockaddr *)&sin, sizeof(struct sockaddr), 0);
+  		if (error<0)
+    		printk(KERN_DEBUG "Can't connect socket. Error %d\n",error);
+
+  		/* Preparing message header */
+  		msg.msg_flags = 0;
+  		msg.msg_name = &sin;
+  		msg.msg_namelen  = sizeof(struct sockaddr_in);
+  		msg.msg_control = NULL;
+  		msg.msg_controllen = 0;
+  		msg.msg_iov = &iov;
+  		msg.msg_control = NULL;
+		sock_init = true;
 	}
 }
 
